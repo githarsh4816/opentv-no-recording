@@ -383,7 +383,6 @@ private fun OpenTvApp(isTelevision: Boolean) {
                 SyncScreen(onBack = { navController.popBackStack() })
             }
 
-
             composable(Routes.CHANNELS) {
                 ChannelManagerScreen(onBack = { navController.popBackStack() })
             }
@@ -501,7 +500,15 @@ private fun OpenTvApp(isTelevision: Boolean) {
 }
 
 /**
- * A slim banner shown 30 seconds before a scheduled recording takes over the screen (single-
- * connection auto-switch). It gives the viewer a heads-up and a way out: "Keep watching" suppresses
- * the switch for that booking. It clears itself once the switch would have happened.
+ * Detects a ten-foot device.
+ *
+ * Checked at runtime rather than by shipping a separate leanback build: one APK for phone,
+ * tablet, Android TV and Fire TV means one thing to release and one thing to test.
  */
+fun isRunningOnTelevision(context: Context): Boolean {
+    val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+    if (uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) return true
+    val packageManager = context.packageManager
+    return packageManager.hasSystemFeature("android.software.leanback") ||
+        packageManager.hasSystemFeature("android.hardware.type.television")
+}

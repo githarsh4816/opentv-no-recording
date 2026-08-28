@@ -103,12 +103,14 @@
         -->
         <service
             android:name=".recording.RecordingService"
+            android:enabled="false"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
         <!-- Starts a booked recording when its alarm fires; re-arms bookings after a reboot. -->
         <receiver
             android:name=".recording.RecordingAlarmReceiver"
+            android:enabled="false"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

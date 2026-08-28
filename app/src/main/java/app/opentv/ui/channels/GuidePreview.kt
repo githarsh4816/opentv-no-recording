@@ -184,7 +184,8 @@ fun GuidePreview(
                         )
                     }
                 }
-                Spacer(Modifier.weight(1f))                IconButton(onClick = onRefresh) {
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.guide_cd_refresh))
                 }
                 IconButton(onClick = onAddSource) {
