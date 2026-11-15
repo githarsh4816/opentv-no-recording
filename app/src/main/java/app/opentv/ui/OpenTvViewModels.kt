@@ -160,6 +160,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
                     },
                 )
                 // Book any new series-link airings the fresh guide just revealed.
+                runCatching { graph.recordingEngine.rescanSeriesRules() }
             }.onFailure { Log.w("OpenTV", "Background VOD/guide load failed", it) }
         }
     }
@@ -192,7 +193,8 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             }
             val summary = graph.epgRepository.syncAll(now, force = true)
             problems += summary.feedsFailed
-                _ui.value = _ui.value.copy(
+            runCatching { graph.recordingEngine.rescanSeriesRules() }
+            _ui.value = _ui.value.copy(
                 syncing = false,
                 syncMessage = if (problems == 0) {
                     "Refreshed $channels channels, guide matched " +

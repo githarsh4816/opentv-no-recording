@@ -67,6 +67,7 @@ fun SettingsHubScreen(
     onOpenDisplay: () -> Unit,
     onOpenParental: () -> Unit,
     onOpenSync: () -> Unit,
+    onOpenRecordings: () -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {

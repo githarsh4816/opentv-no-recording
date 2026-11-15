@@ -63,6 +63,7 @@ class SyncWorker(
         )
 
         // Book any newly-revealed series-link airings from this fresh guide.
+        runCatching { graph.recordingEngine.rescanSeriesRules() }
 
         // A partial failure is still a retry — but the user keeps everything already on disk.
         return if (anyFailed) Result.retry() else Result.success()

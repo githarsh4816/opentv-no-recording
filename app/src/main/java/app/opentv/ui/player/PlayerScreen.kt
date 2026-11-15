@@ -176,6 +176,8 @@ fun PlayerScreen(
     var panel by remember { mutableStateOf(Panel.NONE) }
     var channelListVisible by remember { mutableStateOf(false) }
     var interaction by remember { mutableIntStateOf(0) }
+    // Offered once per session the first time the user records here while OpenTV isn't exempt from
+    // battery optimisation, so the capture survives the screen sleeping. Never blocks recording.
 
     // Picture-in-picture. While the player is on it is "eligible" to shrink to a floating window
     // (pressing Home does it, handled in MainActivity); [inPip] drives hiding all the chrome.
@@ -245,8 +247,6 @@ fun PlayerScreen(
         val next = (cur + delta).coerceIn(0, queue.size - 1)
         if (next != cur) playChannelId(queue[next].id)
     }
-
-
 
     LaunchedEffect(channelId) {
         val id = channelId ?: return@LaunchedEffect
@@ -610,8 +610,21 @@ fun PlayerScreen(
             }
         }
     }
+}
 
-
+@Composable
+private fun ChannelListRow(
+    item: PlaybackQueue.Item,
+    playing: Boolean,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit,
+    leadingLabel: String? = null,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bg = when {
+        focused -> MaterialTheme.colorScheme.primary
+        playing -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+        else -> Color.Transparent
     }
     val fg = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
     Row(

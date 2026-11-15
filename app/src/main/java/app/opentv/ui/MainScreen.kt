@@ -99,7 +99,9 @@ fun MainScreen(
     onPlayCatchup: (mediaKey: String, url: String, title: String, ua: String) -> Unit,
     activeProfileName: String,
 ) {
-    // Content-type toggles: a switched-off type has its tab hidden here.
+    // Content-type toggles: a switched-off type has its tab hidden here (and its sync skipped in
+    // CatalogRepository). Recordings is never a content type, so it always stays — which also means
+    // there is always at least one tab and never a blank shell, even with all three types off.
     val context = LocalContext.current
     val settings = remember { AppSettings.get(context) }
     val liveEnabled by settings.liveEnabled.collectAsState()
@@ -110,11 +112,10 @@ fun MainScreen(
             if (liveEnabled) add(Tab.LIVE)
             if (moviesEnabled) add(Tab.MOVIES)
             if (seriesEnabled) add(Tab.SHOWS)
-            // Keep the shell usable if every content type is disabled in settings.
-            if (isEmpty()) add(Tab.LIVE)
         }
     }
-    // The default/home tab is the first visible content type.
+    // The default/home tab is the first visible one — Live TV normally, otherwise the first type
+    // still switched on (or Recordings if none are).
     val homeTab = visibleTabs.first()
 
     var tab by remember { mutableStateOf(homeTab) }
