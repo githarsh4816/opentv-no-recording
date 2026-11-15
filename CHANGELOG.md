@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.11.10
+
+- **Fire TV: app row fix, take two.** v0.11.9 replaced the placeholder artwork but the stick still
+  wouldn't list OpenTV. Fire OS reads a sideloaded app's launcher icon straight out of the APK by
+  path, and it only looks in `res/drawable…` folders (a known Fire OS 7/8 quirk that leaves apps
+  with icons under `res/mipmap…` broken or missing). The icon now lives in `drawable-*dpi` and is
+  referenced as `@drawable/ic_launcher`, and the release build keeps real resource paths instead
+  of aapt2-shortened ones, so the stick can find it. After updating, uninstall OpenTV, restart the
+  stick and install it again from Downloader so the launcher re-reads the APK.
+
+## 0.11.9
+
+- **OpenTV now shows up on the TV home screen.** The app was built with a placeholder vector
+  banner and an adaptive-only (XML) launcher icon, which the Fire TV and Google TV launchers
+  either rendered as a blank dark tile with no name on it or failed to render at all, so a
+  sideloaded install only appeared under Settings → Applications. The APK now ships a proper
+  320×180 **banner with the OpenTV wordmark** (Google TV / Android TV home screen) and plain
+  **PNG launcher icons at every density** (Fire TV app row, phones), which is what both
+  launchers expect. Install the update and the OpenTV tile appears in the apps row — on the
+  new Fire TV layout it lands at the end of the row, so hold Select → Move to bring it forward.
+
+## 0.11.8
+
+- **Edit a saved provider.** Settings → Providers now has an **Edit** button on each provider, so you
+  can fix a server address, password, MAC or name in place instead of removing and re-adding it —
+  your favourites, hidden channels and per-provider settings are kept.
+- **Stalker portals: fewer dropped sessions.** A portal that occasionally rejected a call
+  mid-session (channels loading only "sometimes") now gets one automatic re-handshake and retry, so
+  an intermittent refusal becomes a silent re-auth rather than an empty channel list or a channel
+  that won't tune.
+- **Player controls stay clear of the system bar off-TV.** On phones and tablets the bottom control
+  bar (subtitles, audio, quality, aspect ratio) could be drawn under the navigation bar and cut off;
+  it's now inset above it. No change on Android TV.
+
 ## 0.11.7
 
 - **Stalker portals: closer to a real box.** Building on v0.11.6, OpenTV now sends the rest of the

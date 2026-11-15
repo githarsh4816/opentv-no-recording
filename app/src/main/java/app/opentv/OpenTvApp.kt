@@ -65,7 +65,15 @@ class OpenTvApp : Application(), ImageLoaderFactory {
         // the stored channels and re-run the guide matcher — locally, no re-download. This
         // is why a name-cleanup fix shows up on the next launch rather than the next 6-hour
         // sync, and it costs nothing when the version has not changed.
+        // Cold-start reconciliation: a recording still marked "in progress" at process start is an
+        // orphan from a killed capture. Done here, once per process — NOT when the Recordings screen
+        // opens — so checking on a recording you just started never marks it interrupted.
+        appScope.launch { runCatching { graph.recordingRepository.failInterrupted() } }
 
+        // Re-arm scheduled recordings on every launch, for the same reason as the reminders below:
+        // a force-stop or app update drops their exact alarms and only a reboot is covered by the
+        // boot receiver. Re-setting the same alarm is idempotent, so this quietly keeps bookings alive.
+        appScope.launch { runCatching { graph.recordingEngine.rearmScheduled() } }
 
         // Re-arm programme reminders on every launch. Alarms are lost on a force-stop or app
         // update (not just a reboot, which the boot receiver already covers), and re-setting an

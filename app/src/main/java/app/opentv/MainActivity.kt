@@ -126,10 +126,6 @@ class MainActivity : ComponentActivity() {
     private fun handlePlayIntent(intent: Intent?) {
         val id = intent?.getLongExtra(EXTRA_PLAY_CHANNEL, 0L) ?: 0L
         if (id != 0L) app.opentv.core.PlayRequests.request(id)
-        val recId = intent?.getLongExtra(EXTRA_WATCH_RECORDING, 0L) ?: 0L
-        if (recId != 0L) {
-            app.opentv.core.RecordingSignals.requestWatch(recId, System.currentTimeMillis())
-        }
     }
 
     // ---- Picture-in-picture ------------------------------------------------------------------
@@ -174,9 +170,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** A reminder notification carries the channel to tune to in this extra. */
         const val EXTRA_PLAY_CHANNEL = "opentv.play_channel"
-
-        /** A recording auto-switch notification carries the recording to watch in this extra. */
-        const val EXTRA_WATCH_RECORDING = "opentv.watch_recording"
     }
 }
 
@@ -198,6 +191,7 @@ object Routes {
     const val ABOUT = "about"
     const val SERIES_DETAIL = "series/{seriesId}"
     const val MOVIE_DETAIL = "movie/{movieId}"
+    const val EDIT_SOURCE = "edit-source/{sourceId}"
 
     // A person's name goes in a query arg, URL-encoded, so spaces and punctuation survive the round
     // trip — the same inline-encode/decode approach as the VOD player below.
@@ -210,6 +204,7 @@ object Routes {
     fun player(channelId: Long) = "player/$channelId"
     fun seriesDetail(seriesId: Long) = "series/$seriesId"
     fun movieDetail(movieId: Long) = "movie/$movieId"
+    fun editSource(sourceId: Long) = "edit-source/$sourceId"
     fun person(name: String) = "person?name=${java.net.URLEncoder.encode(name, "UTF-8")}"
     fun vodPlayer(key: String, url: String, title: String, ua: String): String {
         fun e(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
@@ -264,36 +259,6 @@ private fun OpenTvApp(isTelevision: Boolean) {
         }
     }
 
-    // Auto-switch: a scheduled recording started, so move the live view onto the recording file
-    // (single-connection safe). Ignore a stale request a long-backgrounded app only now sees.
-    val watchRequest by app.opentv.core.RecordingSignals.watch.collectAsState()
-    LaunchedEffect(watchRequest) {
-        val req = watchRequest ?: return@LaunchedEffect
-        app.opentv.core.RecordingSignals.consumeWatch()
-        val fresh = System.currentTimeMillis() - req.requestedAtMillis < 10 * 60_000L
-        if (req.recordingId != 0L && fresh) {
-            val rec = runCatching {
-                ServiceLocator.get(bootContext).recordingRepository.byId(req.recordingId)
-            }.getOrNull() ?: return@LaunchedEffect
-            runCatching {
-                navController.navigate(
-                    Routes.vodPlayer(
-                        key = "rec:${rec.id}",
-                        url = "optvrec://${rec.id}",
-                        title = rec.title,
-                        ua = rec.userAgent,
-                    ),
-                ) {
-                    launchSingleTop = true
-                    // Drop the live channel we switched away from off the back stack, so Back from
-                    // the recording returns to the home screen — never to a live stream. On a single-
-                    // connection line, returning to live TV while still recording would open a second
-                    // stream and risk the provider banning the account.
-                    popUpTo(Routes.PLAYER) { inclusive = true }
-                }
-            }
-        }
-    }
 
     Box(Modifier.fillMaxSize()) {
         NavHost(navController = navController, startDestination = start) {
@@ -305,6 +270,15 @@ private fun OpenTvApp(isTelevision: Boolean) {
                             popUpTo(Routes.ADD_SOURCE) { inclusive = true }
                         }
                     },
+                )
+            }
+
+            composable(Routes.EDIT_SOURCE) { entry ->
+                val sourceId = entry.arguments?.getString("sourceId")?.toLongOrNull() ?: return@composable
+                AddSourceScreen(
+                    viewModel = sourcesViewModel,
+                    editingSourceId = sourceId,
+                    onFinished = { navController.popBackStack() },
                 )
             }
 
@@ -373,7 +347,6 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     onOpenDisplay = { navController.navigate(Routes.APP_SETTINGS) },
                     onOpenParental = { navController.navigate(Routes.PARENTAL) },
                     onOpenSync = { navController.navigate(Routes.SYNC) },
-                    onOpenRecordings = { /* recording disabled */ },
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                     onBack = { navController.popBackStack() },
                 )
@@ -399,6 +372,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                 ProvidersScreen(
                     viewModel = sourcesViewModel,
                     onAddSource = { navController.navigate(Routes.ADD_SOURCE) },
+                    onEditSource = { src -> navController.navigate(Routes.editSource(src.id)) },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -495,7 +469,6 @@ private fun OpenTvApp(isTelevision: Boolean) {
         // Sits above the whole nav graph so a found update can prompt from any screen.
         UpdateGate()
 
-        // "About to switch to a recording" banner — shows 30s before an auto-switch fires.
     }
 }
 

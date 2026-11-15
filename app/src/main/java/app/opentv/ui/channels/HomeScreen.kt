@@ -65,15 +65,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
-import android.content.Intent
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.compose.ui.window.Dialog
 import app.opentv.R
 import app.opentv.core.AppSettings
 import app.opentv.core.ServiceLocator
 import app.opentv.core.findActivity
-import app.opentv.core.requestIgnoreBatteryOptimizations
 import app.opentv.data.model.Channel
 import app.opentv.data.model.Programme
 import app.opentv.data.model.Reminder
@@ -91,7 +88,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * Live TV: a category rail on the left, the channel list on the right.
@@ -125,7 +121,6 @@ fun HomeScreen(
     val rows by viewModel.rows.collectAsState()
     val selectedCategory by viewModel.selectedCategory.collectAsState()
     val favouritesOnly by viewModel.favouritesOnly.collectAsState()
-    val sources by viewModel.sources.collectAsState()
     val selectedSource by viewModel.selectedSource.collectAsState()
     val windowStart by viewModel.windowStartMillis.collectAsState()
     // How many days ahead the guide is scrolled (0 = live now). Drives the ‹ Today › nav.
@@ -142,10 +137,6 @@ fun HomeScreen(
     var selectedRow by remember { mutableStateOf<ChannelsViewModel.Row?>(null) }
     val previewSound by settings.guidePreviewSound.collectAsState()
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var channelMenu by remember { mutableStateOf<ChannelsViewModel.Row?>(null) }
-    var programmeTarget by remember { mutableStateOf<Pair<ChannelsViewModel.Row, Programme>?>(null) }
-    val coroutineScope = rememberCoroutineScope()
-
 
     // ---- Category rail collapse (Change 2) ---------------------------------------------------
     // The rail is full-width while focus is on it, then slides shut once focus moves into the
@@ -201,6 +192,7 @@ fun HomeScreen(
             previewScope.cancel()
         }
     }
+
     fun startLive(channel: Channel) {
         PlaybackQueue.items = rows.map {
             PlaybackQueue.Item(it.primary.id, it.primary.shownName, it.primary.logoUrl, it.primary.number)
@@ -208,9 +200,7 @@ fun HomeScreen(
         previewController.stop()
         onPlayChannel(channel)
     }
-    fun requestLive(channel: Channel) {
-        startLive(channel)
-    }
+    fun requestLive(channel: Channel) = startLive(channel)
 
     val lifecycleOwner = LocalLifecycleOwner.current
     var screenResumed by remember { mutableStateOf(true) }
@@ -246,8 +236,7 @@ fun HomeScreen(
         previewController.player.volume = if (previewSound) 1f else 0f
     }
 
-    // Tune the preview to the highlighted channel, so it follows the d-pad as you browse — the
-    // standard TV-guide behaviour. Debounced, so holding a direction doesn't re-tune every step.
+    // Tune the preview to the highlighted channel, so it follows the d-pad as you browse.
     LaunchedEffect(highlightedRow?.key, previewEnabled, screenResumed) {
         val row = highlightedRow
         if (!previewEnabled || !screenResumed || row == null) {
@@ -370,6 +359,8 @@ fun HomeScreen(
             } else {
                 // Hand the player the list you're browsing so it can zap channel up/down.
                 fun goFullscreen(channel: Channel) = requestLive(channel)
+
+
                 val dayLabel = when (guideDayOffset) {
                     0 -> stringResource(R.string.guide_today)
                     1 -> stringResource(R.string.guide_tomorrow)
@@ -408,7 +399,7 @@ fun HomeScreen(
                     ChannelList(
                         rows = rows,
                         selectedKey = highlightedRow?.key,
-                        onSelectRow = { row -> channelMenu = row },
+                        onSelectRow = { row -> requestLive(row.primary) },
                         onFocusRow = onFocusChannel,
                         onToggleFavourite = { viewModel.toggleFavourite(it) },
                         onExitLeftFromChannel = onExitLeftChannel,
@@ -420,168 +411,15 @@ fun HomeScreen(
                         windowStartMillis = windowStart,
                         dayOffset = guideDayOffset,
                         selectedKey = highlightedRow?.key,
-                        onSelectRow = { row -> channelMenu = row },
+                        // OK on a channel opens its menu: Watch, Record now, Schedule a later show,
+                        // Record series. The preview already follows the highlight as you browse.
+                        onSelectRow = { row -> requestLive(row.primary) },
                         onFocusRow = onFocusChannel,
-                        onProgramme = { row, programme -> programmeTarget = row to programme },
+                        onProgramme = { _, _ -> Unit },
                         onToggleFavourite = { viewModel.toggleFavourite(it) },
                         onExitLeftFromChannel = onExitLeftChannel,
                         modifier = Modifier.weight(1f).padding(start = 12.dp, end = 12.dp),
                     )
-                }
-            }
-        }
-    }
-    programmeTarget?.let { (targetRow, programme) ->
-        val channel = targetRow.primary
-        val isPast = programme.endUtcMillis <= nowMillis
-
-        Dialog(onDismissRequest = { programmeTarget = null }) {
-            Column(
-                Modifier
-                    .width(440.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(24.dp),
-            ) {
-                Text(
-                    programme.title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "${formatTime(programme.startUtcMillis)}–${formatTime(programme.endUtcMillis)}   ${channel.shownName}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(16.dp))
-
-                // Catch-up playback remains available, but recording actions are intentionally absent.
-                if (isPast && channel.tvArchive) {
-                    RecordActionRow(stringResource(R.string.guide_watch_from_start), primary = true) {
-                        coroutineScope.launch {
-                            val source = graph.sourceRepository.byId(channel.sourceId)
-                            if (source == null) {
-                                Toast.makeText(context, context.getString(R.string.guide_catchup_link_failed), Toast.LENGTH_SHORT).show()
-                            } else {
-                                val mins = (programme.durationMillis / 60000).toInt().coerceAtLeast(1)
-                                val url = graph.xtreamApi.catchupUrl(source, channel.streamId, programme.startUtcMillis, mins)
-                                onPlayCatchup(
-                                    "catchup:${channel.id}:${programme.startUtcMillis}",
-                                    url,
-                                    "${channel.shownName} — ${programme.title}",
-                                    source.userAgent,
-                                )
-                            }
-                        }
-                        programmeTarget = null
-                    }
-                }
-
-                if (!isPast) {
-                    var reminderSet by remember(channel.id, programme.startUtcMillis) {
-                        mutableStateOf<Boolean?>(null)
-                    }
-                    LaunchedEffect(channel.id, programme.startUtcMillis) {
-                        reminderSet =
-                            graph.reminderRepository.forProgramme(channel.id, programme.startUtcMillis) != null
-                    }
-
-                    if (reminderSet == true) {
-                        RecordActionRow(stringResource(R.string.guide_cancel_reminder)) {
-                            coroutineScope.launch {
-                                graph.reminderRepository.forProgramme(channel.id, programme.startUtcMillis)?.let {
-                                    ReminderScheduler.cancel(context, it.id)
-                                    graph.reminderRepository.delete(it.id)
-                                }
-                            }
-                            Toast.makeText(context, context.getString(R.string.guide_reminder_removed), Toast.LENGTH_SHORT).show()
-                            programmeTarget = null
-                        }
-                    } else {
-                        RecordActionRow(stringResource(R.string.guide_remind_me)) {
-                            coroutineScope.launch { setReminder(graph, context, channel, programme, autoTune = false) }
-                            Toast.makeText(context, context.getString(R.string.guide_reminder_set, programme.title), Toast.LENGTH_LONG).show()
-                            programmeTarget = null
-                        }
-                        RecordActionRow(stringResource(R.string.guide_auto_switch)) {
-                            coroutineScope.launch { setReminder(graph, context, channel, programme, autoTune = true) }
-                            Toast.makeText(context, context.getString(R.string.guide_will_switch, channel.shownName), Toast.LENGTH_LONG).show()
-                            programmeTarget = null
-                        }
-                    }
-                }
-
-                RecordActionRow(stringResource(R.string.guide_watch_channel)) {
-                    programmeTarget = null
-                    requestLive(channel)
-                }
-                RecordActionRow(stringResource(R.string.common_cancel)) { programmeTarget = null }
-            }
-        }
-    }
-
-    channelMenu?.let { menuRow ->
-        val channel = menuRow.primary
-        val nowProg = menuRow.now
-        Dialog(onDismissRequest = { channelMenu = null }) {
-            Column(
-                Modifier
-                    .width(480.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(20.dp),
-            ) {
-                Text(
-                    channel.shownName,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                nowProg?.let {
-                    Text(
-                        stringResource(R.string.guide_now_title, it.title),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-
-                Column(
-                    Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    RecordActionRow(stringResource(R.string.guide_watch)) {
-                        channelMenu = null
-                        requestLive(channel)
-                    }
-                    RecordActionRow(stringResource(R.string.guide_open_external)) {
-                        channelMenu = null
-                        coroutineScope.launch {
-                            val ua = graph.sourceRepository.byId(channel.sourceId)?.userAgent ?: "OpenTV/0.1 (Android)"
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(android.net.Uri.parse(channel.streamUrl), "video/*")
-                                putExtra("title", channel.shownName)
-                                // MX Player / VLC read the User-Agent from this header extra.
-                                putExtra("headers", arrayOf("User-Agent", ua))
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            runCatching {
-                                context.startActivity(
-                                    Intent.createChooser(intent, context.getString(R.string.guide_play_channel_with))
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            }.onFailure {
-                                Toast.makeText(context, context.getString(R.string.guide_no_external_player), Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                    RecordActionRow(stringResource(R.string.common_cancel)) { channelMenu = null }
                 }
             }
         }
@@ -612,280 +450,3 @@ private suspend fun setReminder(
     )
     ReminderScheduler.set(context, id, programme.startUtcMillis)
 }
-
-@Composable
-private fun RecordActionRow(label: String, primary: Boolean = false, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val bg = when {
-        focused -> MaterialTheme.colorScheme.primary
-        primary -> MaterialTheme.colorScheme.primaryContainer
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-    val fg = when {
-        focused -> MaterialTheme.colorScheme.onPrimary
-        primary -> MaterialTheme.colorScheme.onPrimaryContainer
-        else -> MaterialTheme.colorScheme.onSurface
-    }
-    Text(
-        label,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Normal,
-        color = fg,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp)
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    )
-}
-
-/** A small focusable quality pill (FHD / HD / SD…) for the record dialog's "record HD or SD" choice. */
-@Composable
-private fun QualityChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val bg = when {
-        focused -> MaterialTheme.colorScheme.primary
-        selected -> MaterialTheme.colorScheme.primaryContainer
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-    val fg = when {
-        focused -> MaterialTheme.colorScheme.onPrimary
-        selected -> MaterialTheme.colorScheme.onPrimaryContainer
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-        color = fg,
-        modifier = Modifier
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(8.dp))
-            .background(bg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    )
-}
-
-@Composable
-private fun RailEntry(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Text(
-        text = label,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-        else MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surface,
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-    )
-}
-
-@Composable
-private fun ChannelRow(
-    row: ChannelsViewModel.Row,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    onToggleFavourite: () -> Unit,
-) {
-    val now = System.currentTimeMillis()
-    val background =
-        if (isSelected) MaterialTheme.colorScheme.surfaceVariant
-        else MaterialTheme.colorScheme.background
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(background)
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AsyncImage(
-            model = row.primary.logoUrl,
-            contentDescription = null,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(6.dp)),
-        )
-        Spacer(Modifier.width(14.dp))
-
-        Column(Modifier.weight(1f)) {
-            // Logo, name, guide — and nothing else. Quality is a playback decision;
-            // its switch lives in the player, not as clutter on every row.
-            Text(
-                row.primary.shownName,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = row.now?.let { "${formatTime(it.startUtcMillis)}  ${it.title}" }
-                    // Honest rather than blank. A user who sees this on every channel knows
-                    // the guide is the problem, not their provider.
-                    ?: stringResource(R.string.guide_no_info),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            row.now?.let { programme ->
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { programme.progressAt(now) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp),
-                )
-            }
-            row.next?.let { next ->
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    stringResource(R.string.guide_next_prefix, formatTime(next.startUtcMillis), next.title),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-
-        IconButton(onClick = onToggleFavourite) {
-            Icon(
-                imageVector = if (row.primary.favourite) Icons.Default.Star
-                else Icons.Outlined.StarOutline,
-                contentDescription = if (row.primary.favourite) stringResource(R.string.common_remove_favourite) else stringResource(R.string.common_favourite),
-            )
-        }
-    }
-}
-
-@Composable
-private fun LoadingState(isSyncing: Boolean) {
-    val s by app.opentv.core.StatusBus.message.collectAsState()
-    val p by app.opentv.core.StatusBus.progress.collectAsState()
-    val status = s
-    val progress = p
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.widthIn(max = 460.dp),
-        ) {
-            if (progress == null) {
-                CircularProgressIndicator()
-            } else {
-                Text(
-                    "${(progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.guide_loading_channels), style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                when {
-                    // Actively assembling — this is work in progress, not a failure.
-                    status != null -> status
-                    isSyncing -> stringResource(R.string.guide_fetching_desc)
-                    // Channels are already on the device; the guide is being built from them.
-                    // A big provider takes a moment (longer on this debug build) — not a failure.
-                    else -> stringResource(R.string.guide_building_desc)
-                },
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-            if (progress != null) {
-                Spacer(Modifier.height(20.dp))
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().height(6.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun NoFavouritesState() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(stringResource(R.string.guide_no_favourites_title), style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(R.string.guide_no_favourites_desc),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-/**
- * Shown when a provider is configured but there are no channels to display and nothing is
- * syncing — i.e. the last catalogue load failed or came back empty. Replaces the endless
- * "Loading your channels" spinner with something the user can act on.
- */
-@Composable
-private fun ChannelsErrorState(onRetry: () -> Unit, onEditProvider: () -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.widthIn(max = 460.dp),
-        ) {
-            Text(
-                stringResource(R.string.guide_load_failed_title),
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(R.string.guide_load_failed_desc),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(20.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                androidx.compose.material3.Button(onClick = onRetry) {
-                    Text(stringResource(R.string.common_try_again))
-                }
-                androidx.compose.material3.OutlinedButton(onClick = onEditProvider) {
-                    Text(stringResource(R.string.guide_edit_provider))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyState(onAddSource: () -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(stringResource(R.string.guide_no_channels_title), style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(R.string.guide_add_provider_desc),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(16.dp))
-            androidx.compose.material3.Button(onClick = onAddSource) { Text(stringResource(R.string.guide_add_provider_button)) }
-        }
-    }
-}
-
-/** UTC in the database, device zone on screen. Converted here and nowhere else. */
-private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-
-private fun formatTime(utcMillis: Long): String = timeFormat.format(Date(utcMillis))
