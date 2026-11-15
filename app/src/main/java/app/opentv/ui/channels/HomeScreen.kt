@@ -151,9 +151,7 @@ fun HomeScreen(
     // The channel whose OK menu (Watch / Record / Schedule) is open.
     var channelMenu by remember { mutableStateOf<ChannelsViewModel.Row?>(null) }
 
-    // First time the user records or schedules while OpenTV isn't exempt from battery optimisation,
-    // offer the exemption so the capture survives standby. Once per session; never blocks recording.
-    }
+    // Recording background prompt removed with recording functionality.
 
     // ---- Category rail collapse (Change 2) ---------------------------------------------------
     // The rail is full-width while focus is on it, then slides shut once focus moves into the
